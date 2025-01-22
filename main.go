@@ -1,3 +1,78 @@
+/*
+# MTGA Binary Patch Utility Documentation
+
+-	Overview
+  - This utility implements a binary file differencing and patching system. It creates, writes, and applies patches between two binary files using a custom patch format identified by the "MTGADIFF" magic number. The system ensures data integrity through SHA-256 checksums and supports files of different sizes.
+
+- File Format Specification
+
+  - Header Structure
+    Contains:
+
+  - Magic Identifier: "MTGADIFF" (8 bytes)
+
+  - Version: 2 bytes
+
+  - Major Version: 0x01
+
+  - Minor Version: 0x00
+
+  - Original File Information:
+
+  - Length: uint32 (4 bytes, big-endian)
+
+  - SHA-256 Checksum: 32 bytes
+
+  - Patched File Information:
+
+  - Length: uint32 (4 bytes, big-endian)
+
+  - SHA-256 Checksum: 32 bytes
+
+  - Patch Items Count: uint32 (4 bytes, big-endian)
+
+  - Patch Item Structure
+    Each patch item contains:
+
+  - Offset: uint32 (4 bytes, big-endian)
+
+  - Content Length: uint32 (4 bytes, big-endian)
+
+  - Content: variable-length byte array
+
+The utility includes comprehensive error checking for:
+  - File format validation
+  - Version compatibility
+  - File length mismatches
+  - Checksum verification
+  - I/O operations
+  - Buffer operations
+
+- Usage Examples
+
+Creating a Patch:
+
+	original, err := os.ReadFile("original.dll")
+	modified, err := os.ReadFile("modified.dll")
+	patch, err := generatePatch(original, modified)
+	patchFile, err := os.Create("patch.mtgadiff")
+	err = writePatchFile(patch, patchFile)
+
+Applying a Patch:
+
+	patchFile, err := os.Open("patch.mtgadiff")
+	readPatch, err := readPatchFile(patchFile)
+	result, err := applyPatch(original, readPatch)
+
+- Progress Reporting
+The utility includes progress reporting during:
+  - Patch generation
+  - Patch writing
+  - Patch reading
+  - Patch application
+
+Progress is displayed using console output with current/total item counts.
+*/
 package main
 
 import (
@@ -20,19 +95,28 @@ const (
 )
 
 type PatchItem struct {
-	Offset  uint32
-	Content []byte
+	Offset  uint32 // Position in the file where the patch should be applied | uint32 (4 bytes, big-endian)
+	Content []byte // The actual patch data | variable-length byte array
 }
 
 type PatchFile struct {
-	OriginalLength   uint32
-	OriginalChecksum [32]byte
-	PatchedLength    uint32
-	PatchedChecksum  [32]byte
-	PatchItems       []PatchItem
+	OriginalLength   uint32      // Length of the original file | uint32 (4 bytes, big-endian)
+	OriginalChecksum [32]byte    // SHA-256 hash of original file
+	PatchedLength    uint32      // Length of the resulting patched file
+	PatchedChecksum  [32]byte    // SHA-256 hash of patched file
+	PatchItems       []PatchItem // List of patches to apply
 }
 
-// Generate a patch by comparing two files
+/*
+Generates a patch by comparing two binary files byte by byte.
+Key features:
+
+ 1. Validates input files are not empty
+ 2. Returns early if files are identical
+ 3. Handles files of different sizes
+ 4. Creates patches for different sections
+ 5. Includes additional data if modified file is longer
+*/
 func generatePatch(original, modified []byte) (*PatchFile, error) {
 	if len(original) == 0 || len(modified) == 0 {
 		return nil, errors.New("empty input files")
@@ -96,7 +180,17 @@ func generatePatch(original, modified []byte) (*PatchFile, error) {
 	return patch, nil
 }
 
-// Write patch to file in specified format
+/*
+Writes a patch to a file in the specified format.
+Writing sequence:
+
+ 1. Magic identifier
+ 2. Version information
+ 3. Original file metadata
+ 4. Patched file metadata
+ 5. Number of patch items
+ 6. Individual patch items
+*/
 func writePatchFile(patch *PatchFile, writer io.Writer) error {
 	// Write magic identifier
 	if _, err := writer.Write([]byte(IDENTIFIER)); err != nil {
@@ -148,7 +242,19 @@ func writePatchFile(patch *PatchFile, writer io.Writer) error {
 	return nil
 }
 
-// Read patch from file
+/*
+Reads and validates a patch file.
+
+Validation steps:
+
+-	1. Verifies magic identifier
+
+- 	2. Checks version compatibility
+
+- 	3. Reads file metadata
+
+- 	4. Loads patch items
+*/
 func readPatchFile(reader io.Reader) (*PatchFile, error) {
 	// Read and verify magic identifier
 	magic := make([]byte, len(IDENTIFIER))
@@ -218,7 +324,16 @@ func readPatchFile(reader io.Reader) (*PatchFile, error) {
 	return patch, nil
 }
 
-// Apply patch to original file
+/*
+# Applies a patch to an original file to create the modified version.
+
+Safety features:
+  - Validates original file length
+  - Verifies original file checksum
+  - Ensures correct patched file length
+  - Validates final checksum
+  - Handles dynamic buffer resizing
+*/
 func applyPatch(original []byte, patch *PatchFile) ([]byte, error) {
 	// Verify original file
 	if uint32(len(original)) != patch.OriginalLength {
