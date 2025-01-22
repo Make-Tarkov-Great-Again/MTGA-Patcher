@@ -28,4 +28,7 @@ Discord: [https://discord.gg/maketarkovgreatagain](https://discord.gg/maketarkov
 
 Feel free to create a fork, open a pull request and request a review: **We are open to any contribution!**
 
+However please remember this is a diririvitve of AKI's ByteBanger. You are subject to AKI's licence, as-well as ours.
+
+
 <p align="center"><img src = "https://user-images.githubusercontent.com/21200584/183050357-6c92f1cd-68ca-4f74-b41d-1706915c67cf.gif"></p>
