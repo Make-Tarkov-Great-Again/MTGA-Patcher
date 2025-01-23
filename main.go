@@ -82,12 +82,11 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/Make-Tarkov-Great-Again/flog/v4/flog"
 	"io"
 	"mtgapatcher/helper"
 	"os"
 	"time"
-
-	"github.com/Make-Tarkov-Great-Again/flog/v4/flog"
 )
 
 const (
@@ -497,16 +496,21 @@ func applyPatch(original []byte, patch *PatchFile) ([]byte, error) {
 	return modified, nil
 }
 
-func runv2(original, modified []byte) error {
+func runv2() error {
+	original, modified, err := readv2()
+	if err != nil {
+		return fmt.Errorf("readv2: %v", err)
+	}
+
 	patch, err := generatePatch(original, modified)
 	if err != nil {
-		return fmt.Errorf("Error generating patch: %w", err)
+		return fmt.Errorf("error generating patch: %w", err)
 	}
 
 	// Write patch to file
 	patchFile, err := os.Create("patchv2.mtgadiff")
 	if err != nil {
-		return fmt.Errorf("Error creating patch file: %v", err)
+		return fmt.Errorf("error creating patch file: %v", err)
 	}
 	defer patchFile.Close()
 
@@ -520,25 +524,22 @@ func runv2(original, modified []byte) error {
 	// Read patch from file
 	var bufReader *bufio.Reader
 	if patchFile, err := os.Open("patchv2.mtgadiff"); err != nil {
-		return fmt.Errorf("Error opening patch file: %v", err)
+		return fmt.Errorf("error opening patch file: %v", err)
 	} else {
 		bufReader = bufio.NewReader(patchFile)
 	}
 
 	readPatch, err := readPatchFilev2(bufReader)
 	if err != nil {
-		return fmt.Errorf("Error reading patch:", err)
+		return fmt.Errorf("error reading patch", err)
 	}
 
 	// Apply patch
 	result, err := applyPatch(original, readPatch)
 	if err != nil {
-		return fmt.Errorf("Error applying patch: %v", err)
+		return fmt.Errorf("error applying patch: %v", err)
 	}
 
-	// flog.Info("Original:", original)
-	// flog.Info("Modified:", modified)
-	// flog.Info("Result:", result)
 	flog.Info("Patch successful:", bytes.Equal(modified, result))
 	if err := os.WriteFile("outputv2.dll", result, 0644); err != nil {
 		return err
@@ -547,45 +548,47 @@ func runv2(original, modified []byte) error {
 	return nil
 }
 
-func run(original, modified []byte) error {
+func run() error {
+	original, modified, err := readv1()
+	if err != nil {
+		return fmt.Errorf("readv1: %v", err)
+	}
+
 	// Generate patch
 	patch, err := generatePatch(original, modified)
 	if err != nil {
-		return err
+		return fmt.Errorf("error generating patch: %w", err)
 	}
 
 	// Write patch to file
 	patchFile, err := os.Create("patch.mtgadiff")
 	if err != nil {
-		return err
+		return fmt.Errorf("error creating patch file: %v", err)
 	}
 	defer patchFile.Close()
 
 	if err := writePatchFile(patch, patchFile); err != nil {
-		return err
+		return fmt.Errorf("error writing patch file: %v", err)
 	}
 
 	//Read patch from file
 	patchFile, err = os.Open("patch.mtgadiff")
 	if err != nil {
-		return err
+		return fmt.Errorf("error opening patch file: %v", err)
 	}
 
 	//patchFile.Seek(0, 0)
 	readPatch, err := readPatchFile(patchFile)
 	if err != nil {
-		return err
+		return fmt.Errorf("error reading patch file: %v", err)
 	}
 
 	// Apply patch
 	result, err := applyPatch(original, readPatch)
 	if err != nil {
-		return err
+		return fmt.Errorf("Error applying patch: %v", err)
 	}
 
-	// flog.Info("Original:", original)
-	// flog.Info("Modified:", modified)
-	// flog.Info("Result:", result)
 	flog.Info("Patch successful:", bytes.Equal(modified, result))
 	if err := os.WriteFile("output.dll", result, 0644); err != nil {
 		return err
@@ -593,22 +596,34 @@ func run(original, modified []byte) error {
 	return nil
 }
 
-func main() {
-
-	// Example usage
+func readv1() ([]byte, []byte, error) {
 	original, err := os.ReadFile("Assembly-CSharp.dll.spt")
 	if err != nil {
-		flog.Error("Oringal file does not exist", err)
-		return
+		return nil, nil, err
 	}
 	modified, err := os.ReadFile("Assembly-CSharp.dll")
 	if err != nil {
-		flog.Error("new file does not exist:", err)
-		return
+		return nil, nil, err
+	}
+	return original, modified, nil
+}
+
+func readv2() ([]byte, []byte, error) {
+	original, err := readFileWithFileRead("Assembly-CSharp.dll.spt")
+	if err != nil {
+		return nil, nil, err
+	}
+	modified, err := readFileWithFileRead("Assembly-CSharp.dll")
+	if err != nil {
+		return nil, nil, err
 	}
 
+	return original, modified, nil
+}
+
+func main() {
 	start := time.Now()
-	if err := run(original, modified); err != nil {
+	if err := run(); err != nil {
 		flog.Error("Error running patch:", err)
 		return
 	}
@@ -616,12 +631,37 @@ func main() {
 	fmt.Println("Elapsed time for run:", elapsed)
 
 	start = time.Now()
-	if err := runv2(original, modified); err != nil {
+	if err := runv2(); err != nil {
 		flog.Error(err)
 		return
 	}
 	elapsed = time.Since(start)
 	fmt.Println("Elapsed time for runv2:", elapsed)
+}
 
-	//Just patching this time
+//const BUFFERSIZE int = 256 * 1024
+
+func readFileWithFileRead(filePath string) ([]byte, error) {
+	// Open the file
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	// Get the file size
+	stat, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	// Create a byte array the size of the file
+	content := make([]byte, stat.Size())
+
+	// Read the entire file into the byte slice
+	if _, err = file.Read(content); err != nil {
+		return nil, err
+	}
+
+	return content, nil
 }
