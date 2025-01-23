@@ -76,14 +76,16 @@ Progress is displayed using console output with current/total item counts.
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
-	"math"
+	"mtgapatcher/helper"
 	"os"
+	"time"
 
 	"github.com/Make-Tarkov-Great-Again/flog/v4/flog"
 )
@@ -135,13 +137,13 @@ func generatePatch(original, modified []byte) (*PatchFile, error) {
 		return patch, nil
 	}
 
-	minLength := int(math.Min(float64(len(original)), float64(len(modified))))
+	minLength := helper.MinInt(len(original), len(modified)) //int(math.Min(float64(len(original)), float64(len(modified))))
 	var currentData []byte
 	diffOffsetStart := 0
 
 	// Compare byte by byte up to the minimum length
 	for i := 0; i < minLength; i++ {
-		fmt.Printf("\rOn Generating patch file: %d/%d (\"Max\" is estimation)", i, minLength)
+		//fmt.Printf("\rOn Generating patch file: %d/%d (\"Max\" is estimation)", i, minLength)
 
 		if original[i] != modified[i] {
 			if len(currentData) == 0 {
@@ -225,8 +227,8 @@ func writePatchFile(patch *PatchFile, writer io.Writer) error {
 	}
 
 	// Write patch items
-	for i, item := range patch.PatchItems {
-		fmt.Printf("\rOn Writing patch file: %d/%d", i, len(patch.PatchItems)+1)
+	for _, item := range patch.PatchItems {
+		//fmt.Printf("\rOn Writing patch file: %d/%d", i, len(patch.PatchItems)+1)
 
 		if err := binary.Write(writer, binary.BigEndian, item.Offset); err != nil {
 			return err
@@ -237,6 +239,60 @@ func writePatchFile(patch *PatchFile, writer io.Writer) error {
 		if _, err := writer.Write(item.Content); err != nil {
 			return err
 		}
+	}
+
+	return nil
+}
+
+func writePatchFilev2(patch *PatchFile, bufWriter *bufio.Writer) error {
+	// Write magic identifier
+	if _, err := bufWriter.Write([]byte(IDENTIFIER)); err != nil {
+		return err
+	}
+
+	// Write version
+	if _, err := bufWriter.Write([]byte{VERSION_MAJOR, VERSION_MINOR}); err != nil {
+		return err
+	}
+
+	// Write original file info
+	if err := binary.Write(bufWriter, binary.BigEndian, patch.OriginalLength); err != nil {
+		return err
+	}
+	if _, err := bufWriter.Write(patch.OriginalChecksum[:]); err != nil {
+		return err
+	}
+
+	// Write patched file info
+	if err := binary.Write(bufWriter, binary.BigEndian, patch.PatchedLength); err != nil {
+		return err
+	}
+	if _, err := bufWriter.Write(patch.PatchedChecksum[:]); err != nil {
+		return err
+	}
+
+	// Write patch items count
+	itemCount := uint32(len(patch.PatchItems))
+	if err := binary.Write(bufWriter, binary.BigEndian, itemCount); err != nil {
+		return err
+	}
+
+	// Write patch items
+	for _, item := range patch.PatchItems {
+		if err := binary.Write(bufWriter, binary.BigEndian, item.Offset); err != nil {
+			return err
+		}
+		if err := binary.Write(bufWriter, binary.BigEndian, uint32(len(item.Content))); err != nil {
+			return err
+		}
+		if _, err := bufWriter.Write(item.Content); err != nil {
+			return err
+		}
+	}
+
+	// Flush the buffered writer
+	if err := bufWriter.Flush(); err != nil {
+		return err
 	}
 
 	return nil
@@ -300,7 +356,7 @@ func readPatchFile(reader io.Reader) (*PatchFile, error) {
 
 	patch.PatchItems = make([]PatchItem, itemCount)
 	for i := uint32(0); i < itemCount; i++ {
-		fmt.Printf("\rOn Reading patch file: %d/%d", i, itemCount)
+		//fmt.Printf("\rOn Reading patch file: %d/%d", i, itemCount)
 
 		var offset, length uint32
 		if err := binary.Read(reader, binary.BigEndian, &offset); err != nil {
@@ -312,6 +368,73 @@ func readPatchFile(reader io.Reader) (*PatchFile, error) {
 
 		content := make([]byte, length)
 		if _, err := reader.Read(content); err != nil {
+			return nil, err
+		}
+
+		patch.PatchItems[i] = PatchItem{
+			Offset:  offset,
+			Content: content,
+		}
+	}
+
+	return patch, nil
+}
+
+func readPatchFilev2(bufReader *bufio.Reader) (*PatchFile, error) {
+	// Read and verify magic identifier
+	magic := make([]byte, len(IDENTIFIER))
+	if _, err := io.ReadFull(bufReader, magic); err != nil {
+		return nil, err
+	}
+	if string(magic) != IDENTIFIER {
+		return nil, errors.New("invalid patch file format")
+	}
+
+	// Read and verify version
+	version := make([]byte, 2)
+	if _, err := io.ReadFull(bufReader, version); err != nil {
+		return nil, err
+	}
+	if version[0] != VERSION_MAJOR || version[1] != VERSION_MINOR {
+		return nil, errors.New("unsupported patch version")
+	}
+
+	patch := &PatchFile{}
+
+	// Read original file info
+	if err := binary.Read(bufReader, binary.BigEndian, &patch.OriginalLength); err != nil {
+		return nil, err
+	}
+	if _, err := io.ReadFull(bufReader, patch.OriginalChecksum[:]); err != nil {
+		return nil, err
+	}
+
+	// Read patched file info
+	if err := binary.Read(bufReader, binary.BigEndian, &patch.PatchedLength); err != nil {
+		return nil, err
+	}
+	if _, err := io.ReadFull(bufReader, patch.PatchedChecksum[:]); err != nil {
+		return nil, err
+	}
+
+	// Read patch items
+	var itemCount uint32
+	if err := binary.Read(bufReader, binary.BigEndian, &itemCount); err != nil {
+		return nil, err
+	}
+
+	patch.PatchItems = make([]PatchItem, itemCount)
+	for i := uint32(0); i < itemCount; i++ {
+		var offset, length uint32
+		if err := binary.Read(bufReader, binary.BigEndian, &offset); err != nil {
+			return nil, err
+		}
+		if err := binary.Read(bufReader, binary.BigEndian, &length); err != nil {
+			return nil, err
+		}
+
+		content := make([]byte, length)
+		if _, err := io.ReadFull(bufReader, content); err != nil {
 			return nil, err
 		}
 
@@ -352,11 +475,12 @@ func applyPatch(original []byte, patch *PatchFile) ([]byte, error) {
 	}
 
 	// Apply patches
-	for i, item := range patch.PatchItems {
-		fmt.Printf("\rOn Patching File: %d/%d", i, len(patch.PatchItems)+1)
+	for _, item := range patch.PatchItems {
+		//fmt.Printf("\rOn Patching File: %d/%d", i, len(patch.PatchItems)+1)
 
-		if int(item.Offset+uint32(len(item.Content))) > len(modified) {
-			modified = append(modified, make([]byte, int(item.Offset+uint32(len(item.Content)))-len(modified))...)
+		num := int(item.Offset + uint32(len(item.Content)))
+		if num > len(modified) {
+			modified = append(modified, make([]byte, num-len(modified))...)
 		}
 		copy(modified[item.Offset:], item.Content)
 	}
@@ -373,6 +497,112 @@ func applyPatch(original []byte, patch *PatchFile) ([]byte, error) {
 	return modified, nil
 }
 
+func runv2(original, modified []byte) error {
+	start := time.Now()
+	patch, err := generatePatch(original, modified)
+	if err != nil {
+		return fmt.Errorf("Error generating patch: %w", err)
+	}
+
+	// Write patch to file
+	patchFile, err := os.Create("patchv2.mtgadiff")
+	if err != nil {
+		return fmt.Errorf("Error creating patch file: %v", err)
+	}
+	defer patchFile.Close()
+
+	// Wrap the file with bufio.Writer
+	bufWriter := bufio.NewWriter(patchFile)
+
+	start = time.Now()
+	if err := writePatchFilev2(patch, bufWriter); err != nil {
+		return fmt.Errorf("error writing patch file: %v", err)
+	}
+
+	// Read patch from file
+	var bufReader *bufio.Reader
+	if patchFile, err := os.Open("patchv2.mtgadiff"); err != nil {
+		return fmt.Errorf("Error opening patch file: %v", err)
+	} else {
+		bufReader = bufio.NewReader(patchFile)
+	}
+
+	start = time.Now()
+	readPatch, err := readPatchFilev2(bufReader)
+	if err != nil {
+		return fmt.Errorf("Error reading patch:", err)
+	}
+
+	// Apply patch
+	start = time.Now()
+	result, err := applyPatch(original, readPatch)
+	if err != nil {
+		return fmt.Errorf("Error applying patch: %v", err)
+	}
+
+	// flog.Info("Original:", original)
+	// flog.Info("Modified:", modified)
+	// flog.Info("Result:", result)
+	flog.Info("Patch successful:", bytes.Equal(modified, result))
+	if err := os.WriteFile("outputv2.dll", result, 0644); err != nil {
+		return err
+	}
+
+	elapsed := time.Since(start)
+	fmt.Printf("\nrunv2 took %s\n", elapsed)
+	return nil
+}
+
+func run(original, modified []byte) error {
+	// Generate patch
+	start := time.Now()
+	patch, err := generatePatch(original, modified)
+	if err != nil {
+		return err
+	}
+
+	// Write patch to file
+	patchFile, err := os.Create("patch.mtgadiff")
+	if err != nil {
+		return err
+	}
+	defer patchFile.Close()
+
+	if err := writePatchFile(patch, patchFile); err != nil {
+		return err
+	}
+
+	//Read patch from file
+	patchFile, err = os.Open("patch.mtgadiff")
+	if err != nil {
+		return err
+	}
+
+	//patchFile.Seek(0, 0)
+	readPatch, err := readPatchFile(patchFile)
+	if err != nil {
+		return err
+	}
+
+	// Apply patch
+	result, err := applyPatch(original, readPatch)
+	if err != nil {
+		return err
+	}
+
+	// flog.Info("Original:", original)
+	// flog.Info("Modified:", modified)
+	// flog.Info("Result:", result)
+	flog.Info("Patch successful:", bytes.Equal(modified, result))
+	if err := os.WriteFile("output.dll", result, 0644); err != nil {
+		return err
+	}
+
+	elapsed := time.Since(start)
+	fmt.Printf("\nrun took %s\n", elapsed)
+	return nil
+}
+
 func main() {
 
 	// Example usage
@@ -387,47 +617,15 @@ func main() {
 		return
 	}
 
-	// // Generate patch
-	// patch, err := generatePatch(original, modified)
-	// if err != nil {
-	// 	flog.Error("Error generating patch:", err)
-	// 	return
-	// }
-
-	// // Write patch to file
-	// patchFile, err := os.Create("patch.mtgadiff")
-	// if err != nil {
-	// 	flog.Error("Error creating patch file:", err)
-	// 	return
-	// }
-	// defer patchFile.Close()
-
-	// if err := writePatchFile(patch, patchFile); err != nil {
-	// 	flog.Error("Error writing patch:", err)
-	// 	return
-	// }
-
-	// Read patch from file
-
-	patchFile, _ := os.Open("patch.mtgadiff")
-	patchFile.Seek(0, 0)
-	readPatch, err := readPatchFile(patchFile)
-	if err != nil {
-		flog.Error("Error reading patch:", err)
+	if err := run(original, modified); err != nil {
+		flog.Error("Error running patch:", err)
 		return
 	}
 
-	// Apply patch
-	result, err := applyPatch(original, readPatch)
-	if err != nil {
-		flog.Error("Error applying patch:", err)
+	if err := runv2(original, modified); err != nil {
+		flog.Error(err)
 		return
 	}
 
-	// flog.Info("Original:", original)
-	// flog.Info("Modified:", modified)
-	// flog.Info("Result:", result)
-	flog.Info("Patch successful:", bytes.Equal(modified, result))
-	os.WriteFile("output.dll", result, 0644)
 	//Just patching this time
 }
