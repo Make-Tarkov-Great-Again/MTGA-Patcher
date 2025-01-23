@@ -659,7 +659,7 @@ func readFileWithFileRead(filePath string) ([]byte, error) {
 	content := make([]byte, stat.Size())
 
 	// Read the entire file into the byte slice
-	if _, err = file.Read(content); err != nil {
+	if _, err = io.ReadFull(file, content); err != nil {
 		return nil, err
 	}
 
