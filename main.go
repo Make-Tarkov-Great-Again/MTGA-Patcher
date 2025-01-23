@@ -498,7 +498,6 @@ func applyPatch(original []byte, patch *PatchFile) ([]byte, error) {
 }
 
 func runv2(original, modified []byte) error {
-	start := time.Now()
 	patch, err := generatePatch(original, modified)
 	if err != nil {
 		return fmt.Errorf("Error generating patch: %w", err)
@@ -514,7 +513,6 @@ func runv2(original, modified []byte) error {
 	// Wrap the file with bufio.Writer
 	bufWriter := bufio.NewWriter(patchFile)
 
-	start = time.Now()
 	if err := writePatchFilev2(patch, bufWriter); err != nil {
 		return fmt.Errorf("error writing patch file: %v", err)
 	}
@@ -527,14 +525,12 @@ func runv2(original, modified []byte) error {
 		bufReader = bufio.NewReader(patchFile)
 	}
 
-	start = time.Now()
 	readPatch, err := readPatchFilev2(bufReader)
 	if err != nil {
 		return fmt.Errorf("Error reading patch:", err)
 	}
 
 	// Apply patch
-	start = time.Now()
 	result, err := applyPatch(original, readPatch)
 	if err != nil {
 		return fmt.Errorf("Error applying patch: %v", err)
@@ -548,14 +544,11 @@ func runv2(original, modified []byte) error {
 		return err
 	}
 
-	elapsed := time.Since(start)
-	fmt.Printf("\nrunv2 took %s\n", elapsed)
 	return nil
 }
 
 func run(original, modified []byte) error {
 	// Generate patch
-	start := time.Now()
 	patch, err := generatePatch(original, modified)
 	if err != nil {
 		return err
@@ -597,9 +590,6 @@ func run(original, modified []byte) error {
 	if err := os.WriteFile("output.dll", result, 0644); err != nil {
 		return err
 	}
-
-	elapsed := time.Since(start)
-	fmt.Printf("\nrun took %s\n", elapsed)
 	return nil
 }
 
@@ -617,15 +607,21 @@ func main() {
 		return
 	}
 
+	start := time.Now()
 	if err := run(original, modified); err != nil {
 		flog.Error("Error running patch:", err)
 		return
 	}
+	elapsed := time.Since(start)
+	fmt.Println("Elapsed time for run:", elapsed)
 
+	start = time.Now()
 	if err := runv2(original, modified); err != nil {
 		flog.Error(err)
 		return
 	}
+	elapsed = time.Since(start)
+	fmt.Println("Elapsed time for runv2:", elapsed)
 
 	//Just patching this time
 }
