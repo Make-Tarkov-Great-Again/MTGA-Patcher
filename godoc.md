@@ -117,25 +117,21 @@ Key Features:
 
 ## Usage Examples  
 
-### Programmatic Usage  
-```go
-// Create patch
-original, _ := os.ReadFile("v1.dll")
-modified, _ := os.ReadFile("v2.dll")
-patch, _ := generatePatch(original, modified)
+### Command line Usage  
+### Creating a Patch
 
-// Save to file
-f, _ := os.Create("update.mtgadiff")
-writePatchFile(patch, f)
+Download latest release, then run the following commands in the terminal:
 
-// Apply later
-patchFile, _ := os.Open("update.mtgadiff")
-loadedPatch, _ := readPatchFile(patchFile)
-result, _ := applyPatch(original, loadedPatch)
-os.WriteFile("v2_patched.dll", result, 0644)
+```bash
+./mtgapatcher create -original="path/to/original" -new="path/to/modified" -out="path/to/patch.mtgadiff"
 ```
+### Applying a Patch
 
----
+After a patch is created, you can then apply it to the original file:
+
+```bash
+./mtgapatcher patch -original="path/to/original" -patch="path/to/patch.mtgadiff" -out="path/to/result"
+```
 
 ## Performance Considerations  
 ### Buffered I/O (v2 Functions)  

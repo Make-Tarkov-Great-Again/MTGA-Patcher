@@ -5,6 +5,23 @@
 </p>
 
 
+## Usage Examples
+
+### Creating a Patch
+
+Download latest release, then run the following commands in the terminal:
+
+```bash
+./mtgapatcher create -original="path/to/original" -new="path/to/modified" -out="path/to/patch.mtgadiff"
+```
+### Applying a Patch
+
+After a patch is created, you can then apply it to the original file:
+
+```bash
+./mtgapatcher patch -original="path/to/original" -patch="path/to/patch.mtgadiff" -out="path/to/result"
+```
+
 ## Overview
 This utility implements a binary file differencing and patching system. It creates, writes, and applies patches between two binary files using a custom patch format identified by the "MTGADIFF" magic number. The system ensures data integrity through SHA-256 checksums and supports files of different sizes.
 
@@ -101,23 +118,6 @@ The utility includes comprehensive error checking for:
 - I/O operations
 - Buffer operations
 
-## Usage Examples
-
-### Creating a Patch
-```go
-original, err := os.ReadFile("original.dll")
-modified, err := os.ReadFile("modified.dll")
-patch, err := generatePatch(original, modified)
-patchFile, err := os.Create("patch.mtgadiff")
-err = writePatchFile(patch, patchFile)
-```
-
-### Applying a Patch
-```go
-patchFile, err := os.Open("patch.mtgadiff")
-readPatch, err := readPatchFile(patchFile)
-result, err := applyPatch(original, readPatch)
-```
 
 ## Contribution
 

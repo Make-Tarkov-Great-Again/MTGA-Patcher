@@ -85,8 +85,10 @@ import (
 	"github.com/Make-Tarkov-Great-Again/flog/v4/flog"
 	"io"
 	"mtgapatcher/helper"
+	"mtgapatcher/util"
 	"os"
-	"time"
+	"flag"
+
 )
 
 const (
@@ -108,6 +110,144 @@ type PatchFile struct {
 	PatchItems       []PatchItem // List of patches to apply
 }
 
+const (
+	MODE_CREATE = "create"
+	MODE_PATCH  = "patch"
+)
+
+// CLIOptions holds the command line arguments
+type CLIOptions struct {
+	mode        string
+	originalPath string
+	newPath     string
+	patchPath   string
+	outputPath  string
+}
+
+func parseFlags() (*CLIOptions, error) {
+	options := &CLIOptions{}
+
+	// Create command
+	createCmd := flag.NewFlagSet(MODE_CREATE, flag.ExitOnError)
+	createOriginal := createCmd.String("original", "", "Path to original file")
+	createNew := createCmd.String("new", "", "Path to new/modified file")
+	createOutput := createCmd.String("out", "", "Path to save the patch file")
+
+	// Patch command
+	patchCmd := flag.NewFlagSet(MODE_PATCH, flag.ExitOnError)
+	patchOriginal := patchCmd.String("original", "", "Path to original file")
+	patchFile := patchCmd.String("patch", "", "Path to patch file")
+	patchOutput := patchCmd.String("out", "", "Path to save the patched file")
+
+	if len(os.Args) < 2 {
+		return nil, fmt.Errorf("expected 'create' or 'patch' subcommands")
+	}
+
+	switch os.Args[1] {
+	case MODE_CREATE:
+		options.mode = MODE_CREATE
+		createCmd.Parse(os.Args[2:])
+		options.originalPath = *createOriginal
+		options.newPath = *createNew
+		options.outputPath = *createOutput
+
+	case MODE_PATCH:
+		options.mode = MODE_PATCH
+		patchCmd.Parse(os.Args[2:])
+		options.originalPath = *patchOriginal
+		options.patchPath = *patchFile
+		options.outputPath = *patchOutput
+
+	default:
+		return nil, fmt.Errorf("expected 'create' or 'patch' subcommands")
+	}
+
+	// Validate required fields
+	if options.originalPath == "" {
+		return nil, fmt.Errorf("original file path is required")
+	}
+	if options.outputPath == "" {
+		return nil, fmt.Errorf("output path is required")
+	}
+	if options.mode == MODE_CREATE && options.newPath == "" {
+		return nil, fmt.Errorf("new file path is required for create mode")
+	}
+	if options.mode == MODE_PATCH && options.patchPath == "" {
+		return nil, fmt.Errorf("patch file path is required for patch mode")
+	}
+
+	return options, nil
+}
+
+
+func createPatch(opts *CLIOptions) error {
+	// Read original and new files
+	original, err := readFileWithFileRead(opts.originalPath)
+	if err != nil {
+		return fmt.Errorf("error reading original file: %v", err)
+	}
+
+	modified, err := readFileWithFileRead(opts.newPath)
+	if err != nil {
+		return fmt.Errorf("error reading new file: %v", err)
+	}
+
+	// Generate patch
+	patch, err := generatePatch(original, modified)
+	if err != nil {
+		return fmt.Errorf("error generating patch: %v", err)
+	}
+
+	// Write patch to file
+	patchFile, err := os.Create(opts.outputPath)
+	if err != nil {
+		return fmt.Errorf("error creating patch file: %v", err)
+	}
+	defer patchFile.Close()
+
+	if err := writePatchFile(patch, patchFile); err != nil {
+		return fmt.Errorf("error writing patch file: %v", err)
+	}
+
+	flog.Info("Successfully created patch file:", opts.outputPath)
+	return nil
+}
+
+func applyPatchFile(opts *CLIOptions) error {
+	// Read original file
+	original, err := readFileWithFileRead(opts.originalPath)
+	if err != nil {
+		return fmt.Errorf("error reading original file: %v", err)
+	}
+
+	// Read patch file
+	patchFile, err := os.Open(opts.patchPath)
+	if err != nil {
+		return fmt.Errorf("error opening patch file: %v", err)
+	}
+	defer patchFile.Close()
+
+	// Read patch data
+	readPatch, err := readPatchFile(patchFile)
+	if err != nil {
+		return fmt.Errorf("error reading patch file: %v", err)
+	}
+
+	// Apply patch
+	result, err := applyPatch(original, readPatch)
+	if err != nil {
+		return fmt.Errorf("error applying patch: %v", err)
+	}
+
+	// Write result to output file
+	if err := os.WriteFile(opts.outputPath, result, 0644); err != nil {
+		return fmt.Errorf("error writing output file: %v", err)
+	}
+
+	flog.Info("Successfully applied patch to:", opts.outputPath)
+	return nil
+}
+
 /*
 Generates a patch by comparing two binary files byte by byte.
 Key features:
@@ -122,6 +262,7 @@ func generatePatch(original, modified []byte) (*PatchFile, error) {
 	if len(original) == 0 || len(modified) == 0 {
 		return nil, errors.New("empty input files")
 	}
+	defer util.Un(util.Trace("generate patch"))
 
 	patch := &PatchFile{
 		OriginalLength:   uint32(len(original)),
@@ -197,6 +338,7 @@ func writePatchFile(patch *PatchFile, writer io.Writer) error {
 	if _, err := writer.Write([]byte(IDENTIFIER)); err != nil {
 		return err
 	}
+	defer util.Un(util.Trace("Write patch file"))
 
 	// Write version
 	if _, err := writer.Write([]byte{VERSION_MAJOR, VERSION_MINOR}); err != nil {
@@ -248,6 +390,7 @@ func writePatchFilev2(patch *PatchFile, bufWriter *bufio.Writer) error {
 	if _, err := bufWriter.Write([]byte(IDENTIFIER)); err != nil {
 		return err
 	}
+	defer util.Un(util.Trace("write patch file v2"))
 
 	// Write version
 	if _, err := bufWriter.Write([]byte{VERSION_MAJOR, VERSION_MINOR}); err != nil {
@@ -311,6 +454,8 @@ Validation steps:
 - 	4. Loads patch items
 */
 func readPatchFile(reader io.Reader) (*PatchFile, error) {
+	defer util.Un(util.Trace("Read patch file"))
+
 	// Read and verify magic identifier
 	magic := make([]byte, len(IDENTIFIER))
 	if _, err := reader.Read(magic); err != nil {
@@ -380,6 +525,8 @@ func readPatchFile(reader io.Reader) (*PatchFile, error) {
 }
 
 func readPatchFilev2(bufReader *bufio.Reader) (*PatchFile, error) {
+	defer util.Un(util.Trace("Read patch file v2"))
+
 	// Read and verify magic identifier
 	magic := make([]byte, len(IDENTIFIER))
 	if _, err := io.ReadFull(bufReader, magic); err != nil {
@@ -457,6 +604,8 @@ Safety features:
   - Handles dynamic buffer resizing
 */
 func applyPatch(original []byte, patch *PatchFile) ([]byte, error) {
+	defer util.Un(util.Trace("apply patch"))
+
 	// Verify original file
 	if uint32(len(original)) != patch.OriginalLength {
 		return nil, errors.New("original file length mismatch")
@@ -497,6 +646,8 @@ func applyPatch(original []byte, patch *PatchFile) ([]byte, error) {
 }
 
 func runv2() error {
+	defer util.Un(util.Trace("run v2"))
+
 	original, modified, err := readv2()
 	if err != nil {
 		return fmt.Errorf("readv2: %v", err)
@@ -549,6 +700,8 @@ func runv2() error {
 }
 
 func run() error {
+	defer util.Un(util.Trace("run"))
+
 	original, modified, err := readv1()
 	if err != nil {
 		return fmt.Errorf("readv1: %v", err)
@@ -597,6 +750,8 @@ func run() error {
 }
 
 func readv1() ([]byte, []byte, error) {
+	defer util.Un(util.Trace("ready1"))
+
 	original, err := os.ReadFile("Assembly-CSharp.dll.spt")
 	if err != nil {
 		return nil, nil, err
@@ -609,6 +764,8 @@ func readv1() ([]byte, []byte, error) {
 }
 
 func readv2() ([]byte, []byte, error) {
+	defer util.Un(util.Trace("ready2"))
+
 	original, err := readFileWithFileRead("Assembly-CSharp.dll.spt")
 	if err != nil {
 		return nil, nil, err
@@ -622,26 +779,33 @@ func readv2() ([]byte, []byte, error) {
 }
 
 func main() {
-	start := time.Now()
-	if err := run(); err != nil {
-		flog.Error("Error running patch:", err)
-		return
-	}
-	elapsed := time.Since(start)
-	fmt.Println("Elapsed time for run:", elapsed)
+	defer util.Un(util.Trace("main"))
 
-	start = time.Now()
-	if err := runv2(); err != nil {
-		flog.Error(err)
-		return
+	opts, err := parseFlags()
+	if err != nil {
+		flog.Error("Error parsing arguments:", err)
+		os.Exit(1)
 	}
-	elapsed = time.Since(start)
-	fmt.Println("Elapsed time for runv2:", elapsed)
+
+	var opErr error
+	switch opts.mode {
+	case MODE_CREATE:
+		opErr = createPatch(opts)
+	case MODE_PATCH:
+		opErr = applyPatchFile(opts)
+	}
+
+	if opErr != nil {
+		flog.Error("Operation failed:", opErr)
+		os.Exit(1)
+	}
 }
 
 //const BUFFERSIZE int = 256 * 1024
 
 func readFileWithFileRead(filePath string) ([]byte, error) {
+	defer util.Un(util.Trace("readFileWithFileRead"))
+
 	// Open the file
 	file, err := os.Open(filePath)
 	if err != nil {
