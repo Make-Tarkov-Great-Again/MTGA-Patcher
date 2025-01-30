@@ -141,7 +141,7 @@ os.WriteFile("v2_patched.dll", result, 0644)
 ### Buffered I/O (v2 Functions)  
 - Uses `bufio.Reader`/`Writer` for batch operations  
 - Reduces system calls by 80-90% for large files  
-- Recommended for files >10MB  
+- Recommended for files >30MB  
 
 ### Memory Management  
 - Avoids full-file loading with stream processing (future roadmap)  
