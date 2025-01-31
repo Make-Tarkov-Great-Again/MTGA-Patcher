@@ -188,8 +188,7 @@ Designed to work with:
 ### Version History  
 | Version | Date       | Changes                     |  
 |---------|------------|-----------------------------|  
-| v1.0    | 2023-11-01 | Initial release             |  
-| v1.1    | 2024-01-15 | Buffered I/O optimizations  |  
+| v1.0    | 2025-30-01 | Initial release             |  
 
 ---
 
